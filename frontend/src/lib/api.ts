@@ -17,6 +17,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+async function downloadCsv(path: string): Promise<Blob> {
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(path, { headers });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail ?? "Couldn’t export expenses");
+  }
+  return response.blob();
+}
+
 export const api = {
   register: (email: string, password: string) => request<{ access_token: string }>("/api/auth/register", { method: "POST", body: JSON.stringify({ email, password }) }),
   login: (email: string, password: string) => request<{ access_token: string }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -29,4 +40,5 @@ export const api = {
   deleteExpense: (id: string) => request<void>(`/api/expenses/${id}`, { method: "DELETE" }),
   dashboard: () => request<Dashboard>("/api/dashboard/summary"),
   importCsv: (file: File) => { const form = new FormData(); form.append("file", file); return request<ImportResult>("/api/expenses/import", { method: "POST", body: form }); },
+  exportCsv: (params: URLSearchParams) => downloadCsv(`/api/expenses/export/csv${params.toString() ? `?${params.toString()}` : ""}`),
 };
