@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ledgerly}
+      POSTGRES_USER: ${POSTGRES_USER:-ledgerly}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ledgerly}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ledgerly} -d ${POSTGRES_DB:-ledgerly}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ledgerly}:${POSTGRES_PASSWORD:-ledgerly}@db:5432/${POSTGRES_DB:-ledgerly}
+      JWT_SECRET: ${JWT_SECRET:-development-only-change-me}
+      JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES:-30}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  postgres_data:
