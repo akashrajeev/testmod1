@@ -1,8 +1,7 @@
 from datetime import date
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user
@@ -18,7 +17,6 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 def summary(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     today = date.today()
     month_start = today.replace(day=1)
-
     total_cents = db.scalar(select(func.coalesce(func.sum(Expense.amount_cents), 0)).where(Expense.user_id == user.id)) or 0
     month_cents = db.scalar(select(func.coalesce(func.sum(Expense.amount_cents), 0)).where(Expense.user_id == user.id, Expense.expense_date >= month_start, Expense.expense_date <= today)) or 0
 
@@ -30,11 +28,15 @@ def summary(db: Session = Depends(get_db), user: User = Depends(get_current_user
         .order_by(func.sum(Expense.amount_cents).desc())
     ).all()
 
+    if db.bind and db.bind.dialect.name == "postgresql":
+        month_key = func.to_char(Expense.expense_date, "YYYY-MM")
+    else:
+        month_key = func.strftime("%Y-%m", Expense.expense_date)
     trend_rows = db.execute(
-        select(func.substr(func.cast(Expense.expense_date, String), 1, 7), func.sum(Expense.amount_cents))
+        select(month_key.label("month"), func.sum(Expense.amount_cents))
         .where(Expense.user_id == user.id)
-        .group_by(func.substr(func.cast(Expense.expense_date, String), 1, 7))
-        .order_by(func.substr(func.cast(Expense.expense_date, String), 1, 7).desc())
+        .group_by(month_key)
+        .order_by(month_key.desc())
         .limit(12)
     ).all()
 
