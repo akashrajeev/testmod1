@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, Index, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -52,3 +52,11 @@ class Expense(Base):
 
     user: Mapped[User] = relationship(back_populates="expenses")
     category: Mapped[Category] = relationship(back_populates="expenses")
+
+    @property
+    def amount(self) -> Decimal:
+        return (Decimal(self.amount_cents) / Decimal("100")).quantize(Decimal("0.01"))
+
+    @property
+    def date(self) -> date:
+        return self.expense_date
