@@ -12,7 +12,7 @@ A production-oriented full-stack personal expense tracker built with React + Typ
 
 - **SQLAlchemy 2 + Alembic:** explicit relational models and repeatable database migrations.
 - **Argon2 password hashing:** memory-hard password hashing with `argon2-cffi`.
-- **JWT access tokens:** stateless API authentication. The frontend keeps the short-lived token in memory and sends it as a Bearer token.
+- **JWT access tokens:** stateless API authentication. The frontend keeps the short-lived token in `sessionStorage` and sends it as a Bearer token.
 - **Money as integer cents:** avoids floating-point currency errors in the database and API.
 - **Server-side filtering/pagination:** keeps list and dashboard queries scalable.
 - **CSV streaming:** import/export operates row-by-row rather than loading entire files into memory.
@@ -27,7 +27,6 @@ A production-oriented full-stack personal expense tracker built with React + Typ
 │   │   ├── api
 │   │   ├── core
 │   │   ├── db
-│   │   ├── models
 │   │   ├── schemas
 │   │   ├── services
 │   │   └── main.py
@@ -38,11 +37,6 @@ A production-oriented full-stack personal expense tracker built with React + Typ
 │   └── alembic.ini
 ├── frontend
 │   ├── src
-│   │   ├── components
-│   │   ├── hooks
-│   │   ├── lib
-│   │   ├── pages
-│   │   └── types
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   ├── package.json
@@ -130,7 +124,7 @@ The test suite uses an isolated in-memory SQLite database for fast behavioral te
 - `GET /api/expenses/{id}`
 - `PATCH /api/expenses/{id}`
 - `DELETE /api/expenses/{id}`
-- `GET /api/expenses/export`
+- `GET /api/expenses/export/csv`
 - `POST /api/expenses/import`
 - `GET /api/dashboard/summary`
 
