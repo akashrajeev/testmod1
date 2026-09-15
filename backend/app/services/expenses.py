@@ -1,8 +1,7 @@
 import csv
 import hashlib
 import io
-from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from fastapi import HTTPException, UploadFile, status
@@ -17,11 +16,13 @@ DEFAULT_CATEGORIES = ["Food", "Transport", "Housing", "Shopping", "Health", "Ent
 
 
 def cents_from_amount(amount: Decimal) -> int:
-    return int((amount.quantize(CENT, rounding=ROUND_HALF_UP) * 100))
+    if amount.as_tuple().exponent < -2:
+        raise ValueError("amount must have at most 2 decimal places")
+    return int(amount.quantize(CENT, rounding=ROUND_HALF_UP) * 100)
 
 
 def amount_from_cents(cents: int) -> Decimal:
-    return (Decimal(cents) / 100).quantize(CENT)
+    return (Decimal(cents) / Decimal("100")).quantize(CENT)
 
 
 def get_or_create_category(db: Session, name: str) -> Category:
@@ -48,9 +49,7 @@ def create_expense(db: Session, user: User, payload: ExpenseCreate) -> Expense:
     db.add(expense)
     db.commit()
     db.refresh(expense)
-    return db.scalar(
-        select(Expense).options(joinedload(Expense.category)).where(Expense.id == expense.id)
-    )
+    return db.scalar(select(Expense).options(joinedload(Expense.category)).where(Expense.id == expense.id))
 
 
 def update_expense(db: Session, user: User, expense: Expense, payload: ExpenseUpdate) -> Expense:
@@ -114,58 +113,86 @@ def list_expenses(
 
 
 def fingerprint(user_id: int, amount_cents: int, description: str, category: str, expense_date: date, notes: str | None) -> str:
-    raw = "|".join([str(user_id), str(amount_cents), description.strip(), category.strip().lower(), expense_date.isoformat(), (notes or "").strip()])
+    raw = "|".join([
+        str(user_id), str(amount_cents), description.strip(), category.strip().lower(),
+        expense_date.isoformat(), (notes or "").strip()
+    ])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 async def import_csv(db: Session, user: User, file: UploadFile) -> dict:
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please upload a CSV file")
+
     imported = skipped = failed = 0
     errors: list[str] = []
     text = io.TextIOWrapper(file.file, encoding="utf-8-sig", newline="")
     reader = csv.DictReader(text)
-    expected = {"amount", "description", "category", "date", "notes"}
-    if not reader.fieldnames or not expected.issubset({h.strip().lower() for h in reader.fieldnames}):
-        raise HTTPException(status_code=400, detail="CSV headers must include: amount, description, category, date, notes")
+    required = {"amount", "description", "category", "date"}
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV is missing a header row")
 
-    header_map = {h.strip().lower(): h for h in reader.fieldnames}
+    header_map = {h.strip().lower(): h for h in reader.fieldnames if h}
+    if not required.issubset(header_map):
+        raise HTTPException(status_code=400, detail="CSV headers must include: amount, description, category, date")
+
     for row_number, row in enumerate(reader, start=2):
+        savepoint = db.begin_nested()
         try:
             amount = Decimal((row.get(header_map["amount"]) or "").strip())
             description = (row.get(header_map["description"]) or "").strip()
             category_name = (row.get(header_map["category"]) or "").strip()
             expense_date = date.fromisoformat((row.get(header_map["date"]) or "").strip())
-            notes = (row.get(header_map["notes"]) or "").strip() or None
+            notes_key = header_map.get("notes")
+            notes = (row.get(notes_key) or "").strip() or None if notes_key else None
+
             if amount <= 0 or not description or not category_name:
                 raise ValueError("amount must be positive and description/category must be present")
             amount_cents = cents_from_amount(amount)
             fp = fingerprint(user.id, amount_cents, description, category_name, expense_date, notes)
             exists = db.scalar(select(Expense.id).where(Expense.user_id == user.id, Expense.import_fingerprint == fp))
             if exists:
+                savepoint.rollback()
                 skipped += 1
                 continue
+
             category = get_or_create_category(db, category_name)
-            db.add(Expense(user_id=user.id, category_id=category.id, amount_cents=amount_cents, description=description, expense_date=expense_date, notes=notes, import_fingerprint=fp))
+            db.add(Expense(
+                user_id=user.id,
+                category_id=category.id,
+                amount_cents=amount_cents,
+                description=description,
+                expense_date=expense_date,
+                notes=notes,
+                import_fingerprint=fp,
+            ))
             db.flush()
+            savepoint.commit()
             imported += 1
         except (ValueError, InvalidOperation) as exc:
+            savepoint.rollback()
             failed += 1
             errors.append(f"Row {row_number}: {exc}")
-            db.rollback()
         except Exception as exc:
+            savepoint.rollback()
             failed += 1
             errors.append(f"Row {row_number}: invalid data ({exc})")
-            db.rollback()
+
         if len(errors) >= 100:
             errors.append("Additional errors omitted after 100 rows")
             break
+
     db.commit()
     return {"imported": imported, "skipped_duplicates": skipped, "failed": failed, "errors": errors}
 
 
 def csv_rows(db: Session, user: User, date_from: date | None, date_to: date | None):
-    q = select(Expense).options(joinedload(Expense.category)).where(Expense.user_id == user.id).order_by(Expense.expense_date.desc(), Expense.id.desc())
+    q = (
+        select(Expense)
+        .options(joinedload(Expense.category))
+        .where(Expense.user_id == user.id)
+        .order_by(Expense.expense_date.desc(), Expense.id.desc())
+    )
     if date_from:
         q = q.where(Expense.expense_date >= date_from)
     if date_to:
