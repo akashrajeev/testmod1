@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class CategoryOut(BaseModel):
@@ -35,12 +35,12 @@ class ExpenseUpdate(BaseModel):
 
 
 class ExpenseOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
     id: str
-    amount: Decimal
+    amount: Decimal = Field(validation_alias=AliasChoices("amount", "amount_cents"), serialization_alias="amount")
     description: str
     category: CategoryOut
-    date: date
+    date: date = Field(validation_alias=AliasChoices("date", "expense_date"), serialization_alias="date")
     notes: str | None
     created_at: datetime
     updated_at: datetime
